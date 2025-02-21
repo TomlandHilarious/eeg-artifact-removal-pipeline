@@ -4,6 +4,8 @@ from sklearn.cluster import KMeans
 from feature import extract_features
 from ssa import embedding, decomposition, grouping, diagonal_average
 from typing import List
+import time as pytime
+print(torch.__version__)
 
 def k_means_clustering(feature_matrix: torch.Tensor, num_clusters: int):
     """
@@ -186,25 +188,30 @@ def artfiact_removal_pipeline(contaminated_eeg: torch.tensor,
     return cleaned_eeg, blink_est, fd_vals
 
 if __name__ == "__main__":
+    device = 'mps' if torch.backends.mps.is_available() else 'cpu'
     # synthetic data
     torch.manual_seed(42)
-    n_samples = 5000
+    n_samples = 50000
     sample_rate = 256
     time = torch.arange(0, n_samples) / sample_rate
     base_signal = 0.1 * torch.randn(n_samples)
-    blink_indices = torch.randint(0, n_samples, size = (5,))
+    blink_indices = torch.randint(0, n_samples, size = (5,), device=device)
     for idx in blink_indices:
         start = idx
         end = min(idx + 50, n_samples)
-        base_signal[start:end] += torch.linspace(3, 0, end - start)
+        base_signal[start:end] += torch.linspace(3, 0, end - start, device=device)
     eeg_signal = base_signal
 
     # function arguments
     # parameter control
-    window_size = 256
+    # best performance parameters provided below
+    window_size = 128
     num_clusters = 4
-    fd_threshold = 1.04
+    fd_threshold = 1.4
     grouping_threshold = 0.01
+
+
+    start_time = pytime.time()
 
 
     cleaned_eeg, _, _ = artfiact_removal_pipeline(contaminated_eeg=eeg_signal, 
@@ -214,4 +221,6 @@ if __name__ == "__main__":
                               grouping_threshold=grouping_threshold
                               )
     print(cleaned_eeg)
+    end_time = pytime.time()
     print("processing done!")
+    print(f"Elapsed time: {end_time - start_time:.4f} seconds")
