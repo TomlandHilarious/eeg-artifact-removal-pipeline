@@ -44,8 +44,8 @@ def embedding(signal:torch.Tensor, window_size=256):
     """
     x = torch.as_tensor(signal, dtype=torch.float32)
     N = x.shape[0]
-    X = x.unfold(dimension=0, size=window_size, step=1)
-
+    X = x.unfold(dimension=0, size=window_size, step=1).T
+    print("Embedded matrix shape is", X.shape)
     return X
 
 def decomposition(A_hat:torch.Tensor):
@@ -133,39 +133,86 @@ def grouping(A_list, singular_values, threshold=0.01):
             A_sum += A_list[idx]
     return A_sum, kept_indices
 
+
+
+
 def diagonal_average(X_bar: torch.Tensor) -> torch.Tensor:
     """
-    Diagonal-average (Hankelize) the L x K matrix X_bar into a 1D signal s
-    of length (L + K - 1). This is the fourth step in SSA.
+    Diagonal-average (Hankelize) the M x K matrix X_bar into a 1D signal s
+    of length (M + K - 1). This is the fourth step in SSA.
     
     Parameters
     ----------
     X_bar : torch.Tensor
-        A 2D tensor of shape (L, K) representing the partial or grouped
-        trajectory matrix in SSA. L is the window size, and K is the number
-        of columns (N - L + 1 if N is the original signal length).
+        A 2D tensor of shape (M, K) representing the partial or grouped
+        trajectory matrix in SSA. M is the window size, and K is the number
+        of columns
     
     Returns
     -------
     s : torch.Tensor
-        A 1D tensor of length (L + K - 1), obtained by averaging along the
+        A 1D tensor of length (M + K - 1), obtained by averaging along the
         diagonals (r + c = const) of X_bar.
     """
-    L, K = X_bar.shape
-    N = L + K - 1
-
+    M, K = X_bar.shape
+    N = M + K - 1
     # prepare tensors
     s = torch.zeros(N, dtype=X_bar.dtype, device=X_bar.device)
-    count = torch.zeros(N, dtype=X_bar.dtype, device=X_bar.device)
-
-    for r in range(L):
-        for c in range(K):
-            idx = r + c
-            s[idx] += X_bar[r, c]
-            count[idx] += 1
     
-    # only divide at non-zero position
-    mask = (count != 0)
-    s[mask] /= count[mask]
+    for n in range(1, N + 1):
+        if n < M:
+            elems = [X_bar[i, n-i-1] for i in range(n)]
+            s[n-1] = torch.mean(torch.stack(elems))
+        elif n <= K:
+            elems = [X_bar[i, n-i-1] for i in range(M)]
+            s[n-1] = torch.mean(torch.stack(elems))
+        else:
+            elems = [X_bar[i, n-i-1] for i in range(n-K, M)]
+            s[n-1] = torch.mean(torch.stack(elems))
+
+    return s
+
+
+def diagonal_average_vectorized(X_bar: torch.Tensor) -> torch.Tensor:
+    """
+    Vectorized implementation of diagonal averaging (Hankelization) for an M x K matrix X_bar.
+    Returns a 1D tensor s of length (M + K - 1), where each element is the average of elements
+    along the corresponding anti-diagonal (i + j = constant).
+
+    Parameters
+    ----------
+    X_bar : torch.Tensor
+        A 2D tensor of shape (M, K).
+
+    Returns
+    -------
+    s : torch.Tensor
+        A 1D tensor of length (M + K - 1) containing the diagonal averages.
+    """
+    M, K = X_bar.shape
+    N = M + K - 1
+
+    # Create index matrices for rows and columns
+    row_idx = torch.arange(M, device=X_bar.device).view(M, 1).expand(M, K)
+    col_idx = torch.arange(K, device=X_bar.device).view(1, K).expand(M, K)
+    
+    # Each element at (i, j) belongs to diagonal with index i+j
+    diag_idx = row_idx + col_idx  # shape: (M, K)
+    
+    # Flatten X_bar and diag_idx into 1D tensors
+    X_flat = X_bar.reshape(-1)
+    diag_idx_flat = diag_idx.reshape(-1)
+    
+    # Prepare tensors to accumulate sums and counts for each diagonal
+    sums = torch.zeros(N, dtype=X_bar.dtype, device=X_bar.device)
+    counts = torch.zeros(N, dtype=X_bar.dtype, device=X_bar.device)
+    
+    # scatter_add: add X_flat's values into sums at positions given by diag_idx_flat
+    sums.scatter_add_(0, diag_idx_flat, X_flat)
+    # Also count how many elements are summed per diagonal
+    counts.scatter_add_(0, diag_idx_flat, torch.ones_like(X_flat))
+    
+    # Compute the average for each diagonal
+    s = sums / counts
     return s
 

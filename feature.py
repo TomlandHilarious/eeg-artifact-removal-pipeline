@@ -48,7 +48,8 @@ def hjorth_mobility(x: torch.Tensor) -> torch.Tensor:
     torch.Tensor
         A scalar (0D tensor) representing the mobility.
     """
-    dx = x[1:] - x[:-1]
+    
+    dx = torch.diff(x)
     var_x = torch.var(x, unbiased=True)
     var_dx = torch.var(dx, unbiased=True)
     if var_x == 0:
