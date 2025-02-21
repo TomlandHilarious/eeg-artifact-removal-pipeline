@@ -133,9 +133,6 @@ def grouping(A_list, singular_values, threshold=0.01):
             A_sum += A_list[idx]
     return A_sum, kept_indices
 
-
-
-
 def diagonal_average(X_bar: torch.Tensor) -> torch.Tensor:
     """
     Diagonal-average (Hankelize) the M x K matrix X_bar into a 1D signal s
@@ -215,4 +212,7 @@ def diagonal_average_vectorized(X_bar: torch.Tensor) -> torch.Tensor:
     # Compute the average for each diagonal
     s = sums / counts
     return s
+
+
+
 

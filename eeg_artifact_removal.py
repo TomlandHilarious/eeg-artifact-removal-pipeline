@@ -188,8 +188,7 @@ def artfiact_removal_pipeline(contaminated_eeg: torch.tensor,
     return cleaned_eeg, blink_est, fd_vals
 
 if __name__ == "__main__":
-    # device = 'mps' if torch.backends.mps.is_available() else 'cpu'
-    device = 'cpu'
+    device = 'mps' if torch.backends.mps.is_available() else 'cpu'
     # synthetic data
     torch.manual_seed(42)
     n_samples = 50000
