@@ -1,9 +1,10 @@
 import torch
+import platform
 import numpy as np
 from sklearn.cluster import KMeans
 from feature import extract_features
-from ssa import embedding, decomposition, grouping, diagonal_average
-from typing import List
+from ssa import embedding, decomposition, grouping, diagonal_average, diagonal_average_vectorized
+from typing import List, Callable
 import time as pytime
 print(torch.__version__)
 
@@ -40,7 +41,10 @@ def k_means_clustering(feature_matrix: torch.Tensor, num_clusters: int):
     return labels, centers
 
 
-def reconstruct_signals(X:torch.Tensor, labels:np.ndarray, num_clusters:int):
+def reconstruct_signals(X:torch.Tensor, 
+                        labels:np.ndarray, 
+                        num_clusters:int,
+                        diagonal_average:Callable[[torch.Tensor], torch.Tensor]):
 
     L, K = X.shape
     def create_cluster_matrix(X:torch.Tensor, cluster_idx:int):
@@ -91,7 +95,8 @@ def fractal_sevcik(signal:torch.Tensor) -> float:
 def refine_artifact_with_ssa(
         artifact_signal: torch.Tensor,
         window_size: int,
-        grouping_threshold: float):
+        grouping_threshold: float,
+        diagonal_average: Callable[[torch.Tensor], torch.Tensor]):
     """
     Apply SSA to the artifact_signal to remove EEG remnants.
     """
@@ -105,7 +110,8 @@ def remove_blink_artifact(cluster_signals:List[torch.Tensor],
                           window_size:int,
                           eeg_signal: torch.Tensor,
                           fd_threshold:float,
-                          grouping_threshold:float):
+                          grouping_threshold:float,
+                          accelerated:bool):
     """
     Identify and remove eye-blink artifact from EEG by:
       1) Computing FD for each cluster signal,
@@ -156,7 +162,16 @@ def remove_blink_artifact(cluster_signals:List[torch.Tensor],
     #         => blink_artifact = a_b * x
     blink_artifact = a_b * eeg_signal
     # refine the artifact with SSA
-    blink_artifact = refine_artifact_with_ssa(blink_artifact, window_size, grouping_threshold)
+    if accelerated:
+        blink_artifact = refine_artifact_with_ssa(blink_artifact, 
+                                                  window_size, 
+                                                  grouping_threshold,
+                                                  diagonal_average_vectorized)
+    else:
+        blink_artifact = refine_artifact_with_ssa(blink_artifact, 
+                                                  window_size, 
+                                                  grouping_threshold,
+                                                  diagonal_average)
     # subtract the artifact from the contaminated signal
     cleaned_eeg = eeg_signal - blink_artifact
     
@@ -167,7 +182,8 @@ def artfiact_removal_pipeline(contaminated_eeg: torch.tensor,
                               window_size: int,
                               num_clusters: int,
                               fd_threshold: float,
-                              grouping_threshold: float):
+                              grouping_threshold: float,
+                              accelerated: bool=False):
     """
     The function that executes the complete eyeblink artifact removal pipeline.
     """
@@ -178,17 +194,28 @@ def artfiact_removal_pipeline(contaminated_eeg: torch.tensor,
     # Step 3: performs k-means clustering on the feature space
     labels, _ = k_means_clustering(feature_matrix, num_clusters)
     # Step 4: reconstruct the signals from the clustering reults
-    cluster_signals = reconstruct_signals(X, labels, num_clusters)
+    if accelerated:
+        cluster_signals = reconstruct_signals(X, labels, num_clusters, diagonal_average_vectorized)
+    else:
+        cluster_signals = reconstruct_signals(X, labels, num_clusters, diagonal_average)
     # Step 5 - 9: Identify and refine the eye-blink artifact
     cleaned_eeg, blink_est, fd_vals = remove_blink_artifact(cluster_signals,
                                                             window_size,
                                                             contaminated_eeg,
                                                             fd_threshold,
-                                                            grouping_threshold)
+                                                            grouping_threshold,
+                                                            accelerated=accelerated)
     return cleaned_eeg, blink_est, fd_vals
 
 if __name__ == "__main__":
-    device = 'mps' if torch.backends.mps.is_available() else 'cpu'
+    # system = platform.system()
+    # if system == "Darwin":  
+    #     device = 'mps' if torch.backends.mps.is_available() else 'cpu'
+    # elif system == "Windows" or system == "Linux":  
+    #     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    # else:  
+    #     device = 'cpu'
+    device="cpu"
     # synthetic data
     torch.manual_seed(42)
     n_samples = 50000
@@ -209,8 +236,6 @@ if __name__ == "__main__":
     num_clusters = 4
     fd_threshold = 1.4
     grouping_threshold = 0.01
-
-
     start_time = pytime.time()
 
 
@@ -218,7 +243,8 @@ if __name__ == "__main__":
                               window_size=window_size,
                               num_clusters=num_clusters,
                               fd_threshold=fd_threshold,
-                              grouping_threshold=grouping_threshold
+                              grouping_threshold=grouping_threshold,
+                              accelerated=True  
                               )
     print(cleaned_eeg)
     end_time = pytime.time()
